@@ -1,6 +1,7 @@
 """Holt Garmin-Daten über die offizielle Personal API in eine lokale SQLite-DB.
 
   python -m garmin_sync.sync --days 365     # Erstbefüllung
+  python -m garmin_sync.sync --days 5000 --detail-days 365   # Historie ohne Minutenkurven
   python -m garmin_sync.sync                # Täglicher Lauf (Standard: 30 Tage, nur Fehlendes + letzte 3 Tage)
 """
 import argparse
@@ -157,10 +158,12 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--days", type=int, default=30, help="Wie weit zurück (Tage)")
     ap.add_argument("--no-fit", action="store_true", help="Keine FIT-Dateien laden")
+    ap.add_argument("--detail-days", type=int, default=None,
+                    help="Minütliche Tageskurven nur für die letzten N Tage (Standard: wie --days)")
     a = ap.parse_args()
 
     DATA_DIR.mkdir(exist_ok=True)
-    db = sqlite3.connect(DB_PATH)
+    db = sqlite3.connect(DB_PATH, timeout=120)  # Cron und Backfill können parallel laufen
     db.executescript(SCHEMA)
 
     with PersonalApiAuthenticator() as auth:
@@ -178,7 +181,8 @@ def main():
             except HttpError as err:
                 print(f"  {key}: HTTP {err.status_code}")
         sync_range(c, db, start, end, refresh_from)
-        sync_daily(c, db, start, end, refresh_from)
+        detail_days = min(a.days, a.detail_days or a.days)
+        sync_daily(c, db, end - timedelta(days=detail_days - 1), end, refresh_from)
         sync_activities(c, db, start, end, not a.no_fit)
     print(f"Fertig. DB: {DB_PATH}")
 
